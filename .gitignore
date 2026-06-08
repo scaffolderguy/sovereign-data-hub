@@ -1,0 +1,14 @@
+# dependencies / build
+node_modules/
+dist/
+
+# CUSTOMER DATA & KEYS — never publish these
+sdh-data/
+.sdh-key
+*.sdh-key
+
+# misc
+*.tmp
+.DS_Store
+.env
+.env.local

@@ -1,0 +1,21 @@
+{
+  "name": "sovereign-data-hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sovereign Data Hub (SDH) — customer-owned data control plane + work-container protocol (v0.1)",
+  "scripts": {
+    "start": "tsx hub/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0",
+    "vitest": "^2.1.0"
+  }
+}

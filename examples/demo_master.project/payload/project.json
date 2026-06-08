@@ -1,0 +1,15 @@
+{
+  "title": "Acme Q3 launch",
+  "audience": "Investor / board",
+  "format": "Hero video",
+  "tone": "bold, confident",
+  "scenes": [
+    {
+      "id": "scene-1",
+      "title": "Opening",
+      "overlay": "Acme scales to 10M users",
+      "voiceover": "Acme's platform now serves ten million users.",
+      "visualAssets": ["ai-bg-hero.png"]
+    }
+  ]
+}

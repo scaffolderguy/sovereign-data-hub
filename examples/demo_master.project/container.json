@@ -1,0 +1,35 @@
+{
+  "schema_version": "0.1",
+  "container_id": "sdh_3f9a1c8b",
+  "version_id": "v_000001",
+  "parent_version_id": null,
+  "type": "demo_master.project",
+  "owner": { "org_id": "org_acme", "workspace_id": "ws_marketing" },
+  "product": { "name": "Demo Master", "min_version": "1.0.0" },
+  "created_at": "2026-06-08T17:40:00Z",
+  "updated_at": "2026-06-08T17:40:00Z",
+  "title": "Acme Q3 launch",
+  "payload": { "entry": "payload/project.json" },
+  "assets": [
+    {
+      "id": "bg_hero",
+      "pointer": "assets/ai-bg-hero.png",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bytes": 1361071
+    }
+  ],
+  "secrets": [],
+  "governance": {
+    "state": "draft",
+    "reviewers": [],
+    "methodology_checks": [],
+    "history": [
+      {
+        "actor": "user:rob",
+        "action": "created",
+        "at": "2026-06-08T17:40:00Z",
+        "summary": "Initial container"
+      }
+    ]
+  }
+}

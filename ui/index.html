@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Your Data Hub</title>
+<style>
+  :root{
+    --bg1:#fef6ee; --bg2:#f3e9ff; --card:#ffffff; --ink:#3a3340; --soft:#8d8597;
+    --accent:#ff9a7a; --accent2:#a98bff; --ok:#7bd389; --warn:#ffcf6b; --no:#ff8b8b;
+    --shadow:0 14px 34px rgba(120,90,160,.16), 0 3px 8px rgba(120,90,160,.10);
+    --radius:26px;
+  }
+  [data-theme="mint"]{ --bg1:#eafaf1; --bg2:#e6f7ff; --accent:#5ec9a3; --accent2:#5bb6e8; }
+  [data-theme="berry"]{ --bg1:#fdecf3; --bg2:#efe7ff; --accent:#ff7eb6; --accent2:#9a7bff; }
+  [data-theme="dusk"]{ --bg1:#2a2440; --bg2:#34304f; --card:#3c3658; --ink:#f3eefe; --soft:#b9b0d6; --accent:#ffa07a; --accent2:#b59bff; --shadow:0 14px 34px rgba(0,0,0,.35); }
+  [data-theme="sun"]{ --bg1:#fff7e6; --bg2:#ffeede; --accent:#ffb84d; --accent2:#ff8f6b; }
+
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:"Segoe UI",system-ui,-apple-system,sans-serif; color:var(--ink);
+    min-height:100vh; background:linear-gradient(135deg,var(--bg1),var(--bg2)); background-attachment:fixed; }
+  .wrap{ max-width:1080px; margin:0 auto; padding:28px 22px 80px; position:relative; z-index:1; }
+  h1{ font-size:30px; margin:0; letter-spacing:-.5px; }
+  .sub{ color:var(--soft); margin-top:4px; }
+
+  /* soft floating motif for empty space */
+  .motif{ position:fixed; inset:0; overflow:hidden; pointer-events:none; z-index:0; }
+  .motif span{ position:absolute; font-size:46px; opacity:.10; animation:bob 7s ease-in-out infinite; }
+  @keyframes bob{ 0%,100%{ transform:translateY(0) rotate(-4deg);} 50%{ transform:translateY(-16px) rotate(4deg);} }
+
+  .top{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:26px; }
+  .top .grow{ flex:1; }
+  .dots{ display:flex; gap:8px; }
+  .dot{ width:24px; height:24px; border-radius:50%; cursor:pointer; border:3px solid #fff8; box-shadow:var(--shadow); }
+  .btn{ border:none; cursor:pointer; font-weight:700; font-size:15px; color:#fff;
+    background:linear-gradient(135deg,var(--accent),var(--accent2)); padding:12px 18px; border-radius:18px; box-shadow:var(--shadow); }
+  .btn:hover{ filter:brightness(1.04); transform:translateY(-1px); }
+  .btn.ghost{ background:var(--card); color:var(--ink); }
+  .btn.ok{ background:linear-gradient(135deg,#7bd389,#54b06a); }
+  .btn.warn{ background:linear-gradient(135deg,#ffcf6b,#f0a93a); color:#5b4300; }
+  .btn.sm{ font-size:13.5px; padding:9px 14px; border-radius:14px; }
+
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:22px; }
+  .box{ position:relative; background:var(--card); border-radius:var(--radius); padding:22px; box-shadow:var(--shadow);
+    cursor:pointer; transition:transform .15s ease; border:2px solid transparent; overflow:hidden; min-height:170px; }
+  .box:hover{ transform:translateY(-4px) scale(1.012); }
+  .box .ico{ width:56px; height:56px; border-radius:18px; display:flex; align-items:center; justify-content:center;
+    font-size:30px; background:#0000000d; margin-bottom:14px; object-fit:cover; }
+  .box .ttl{ font-weight:800; font-size:18px; line-height:1.2; }
+  .box .meta{ color:var(--soft); font-size:13px; margin-top:4px; }
+  .pill{ display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:700; padding:5px 11px; border-radius:999px; margin-top:14px; }
+  .pill.draft{ background:#8d859722; color:var(--soft); }
+  .pill.in_review{ background:#ffcf6b33; color:#9a7400; }
+  .pill.approved{ background:#7bd38933; color:#2e8a45; }
+  .pill.rejected,.pill.changes_requested{ background:#ff8b8b33; color:#c0392b; }
+  .ver{ position:absolute; top:18px; right:18px; font-weight:800; font-size:13px; color:var(--soft); }
+  .stickers{ position:absolute; bottom:10px; right:12px; font-size:22px; letter-spacing:-2px; }
+  .empty{ text-align:center; color:var(--soft); padding:60px 20px; } .empty .big{ font-size:54px; }
+
+  .scrim{ position:fixed; inset:0; background:rgba(40,30,55,.45); display:none; align-items:center; justify-content:center; padding:20px; z-index:20; }
+  .scrim.on{ display:flex; }
+  .sheet{ background:var(--card); border-radius:30px; padding:26px; width:520px; max-width:100%; max-height:88vh; overflow:auto; box-shadow:var(--shadow); }
+  .row{ display:flex; align-items:center; gap:12px; }
+  .actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+  .timeline{ margin-top:10px; border-left:3px solid #00000010; padding-left:16px; }
+  .tl{ position:relative; padding:8px 0; }
+  .tl::before{ content:""; position:absolute; left:-22px; top:13px; width:11px; height:11px; border-radius:50%; background:var(--accent2); }
+  .tl b{ font-size:14px; } .tl span{ color:var(--soft); font-size:12.5px; }
+  label{ font-weight:700; font-size:13px; color:var(--soft); display:block; margin:16px 0 6px; }
+  input,select{ width:100%; padding:12px 14px; border-radius:16px; border:2px solid #00000012; font-size:15px; background:#fff; color:#3a3340; }
+  .swatches,.emojis{ display:flex; flex-wrap:wrap; gap:8px; }
+  .sw{ width:30px; height:30px; border-radius:10px; cursor:pointer; border:3px solid #fff; box-shadow:0 2px 6px #0002; }
+  .em{ font-size:24px; cursor:pointer; padding:4px 6px; border-radius:10px; } .em:hover{ background:#0000000d; }
+  .x{ float:right; cursor:pointer; font-size:22px; color:var(--soft); border:none; background:none; }
+
+  .connect{ position:fixed; inset:0; background:linear-gradient(135deg,var(--bg1),var(--bg2)); display:flex; align-items:center; justify-content:center; z-index:30; }
+  .connect .card{ background:var(--card); border-radius:30px; padding:34px; width:400px; max-width:90%; box-shadow:var(--shadow); text-align:center; position:relative; z-index:1; }
+  .connect .big{ font-size:50px; }
+  .note{ font-size:12.5px; color:var(--soft); margin-top:14px; }
+</style>
+</head>
+<body>
+  <div class="motif" id="motif"></div>
+
+  <div class="connect" id="connect">
+    <div class="card" id="connectCard"></div>
+  </div>
+
+  <div class="wrap" id="app" style="display:none">
+    <div class="top">
+      <div class="grow"><h1>Your Data Hub</h1><div class="sub">your stuff, your way — it stays yours</div></div>
+      <div class="dots" id="themeDots"></div>
+      <button class="btn" onclick="openCreate()">＋ New box</button>
+    </div>
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="empty" style="display:none"><div class="big">📦</div><p>No boxes yet. Make your first one!</p></div>
+  </div>
+
+  <div class="scrim" id="scrim" onclick="if(event.target===this)closeSheet()"><div class="sheet" id="sheet"></div></div>
+
+<script>
+const THEMES = ["", "mint", "berry", "dusk", "sun"];
+const TYPE_INFO = {
+  "demo_master.project": { label:"Demo Master Project", icon:"🎬", product:{name:"Demo Master", min_version:"1.0.0"} },
+  "goldmine.knowledge":  { label:"Goldmine Knowledge",  icon:"💡", product:{name:"GoldmineAI", min_version:"1.0.0"} },
+  "persona.contract":    { label:"Persona",             icon:"🧠", product:{name:"Persona Contract", min_version:"1.0.0"} },
+  "bts.demo_pack":       { label:"BTS Demo Pack",       icon:"🧪", product:{name:"BTS", min_version:"1.0.0"} },
+};
+const STATUS = { draft:{t:"Draft",e:"✏️"}, in_review:{t:"In review",e:"👀"}, approved:{t:"Approved",e:"✅"},
+  rejected:{t:"Needs work",e:"🛠️"}, changes_requested:{t:"Changes asked",e:"📝"} };
+const STICKERS = ["⭐","🔥","💎","🌈","🚀","❤️","🍀","✨","🎯","🏆","🐙","🦊"];
+const ICONS = ["🎬","💡","🧠","🧪","📦","📁","🎨","📊","🔬","🪄","🌟","🧩"];
+const COLORS = ["#ffffff","#ffe3d3","#ffd6ec","#e3e0ff","#d8f5e3","#fff3c4","#d6f0ff","#2e2a44"];
+const MOTIF = ["☁️","📦","✨","🧸","⭐","🎈","🫧"];
+
+let TOKEN = localStorage.getItem("sdh-token") || "";
+let PREFS = JSON.parse(localStorage.getItem("sdh-prefs-v1") || "{}");
+let CONTAINERS = [], OPEN_ID = null;
+
+function ME(){ return "user:" + (localStorage.getItem("sdh-me") || "you"); }
+function savePrefs(){ localStorage.setItem("sdh-prefs-v1", JSON.stringify(PREFS)); }
+function pref(id){ return PREFS[id] || (PREFS[id] = { icon:null, img:null, color:null, stickers:[] }); }
+
+function paintMotif(){ const m=document.getElementById("motif"); m.innerHTML="";
+  for(let i=0;i<8;i++){ const s=document.createElement("span"); s.textContent=MOTIF[i%MOTIF.length];
+    s.style.left=(8+Math.random()*84)+"%"; s.style.top=(6+Math.random()*82)+"%";
+    s.style.animationDelay=(Math.random()*6)+"s"; s.style.fontSize=(34+Math.random()*30)+"px"; m.appendChild(s); } }
+
+async function api(path, opts={}){
+  const headers = Object.assign({ "x-sdh-token": TOKEN }, opts.headers||{});
+  const res = await fetch(path, Object.assign({}, opts, { headers }));
+  if(!res.ok) throw new Error((await res.json().catch(()=>({error:res.statusText}))).error);
+  return res.status===204 ? null : res.json();
+}
+
+// ---- connect: create-key (first run) vs open (configured) ----
+async function startConnect(){
+  paintMotif();
+  let configured=false;
+  try{ configured = (await (await fetch("/setup-state")).json()).configured; }catch(e){}
+  // already have a working key? skip straight in.
+  if(TOKEN){ try{ await api("/capabilities"); return enterApp(); }catch(e){} }
+  renderConnect(configured);
+}
+function renderConnect(configured){
+  const c = document.getElementById("connectCard");
+  if(!configured){
+    c.innerHTML = `
+      <div class="big">🧸</div>
+      <h1>Create your Data Hub</h1>
+      <p class="sub">A cozy home for your work that stays yours.</p>
+      <label style="text-align:left">Choose your hub key</label>
+      <input id="k1" type="password" placeholder="Choose your hub key" />
+      <label style="text-align:left">Type it again</label>
+      <input id="k2" type="password" placeholder="Re-enter your hub key" />
+      <button class="btn" style="width:100%;margin-top:16px" onclick="createHub()">Create my hub</button>
+      <p class="note"><b>Your hub. Your key. Your data.</b><br>You choose this key. It stays on your device. We never see it.</p>
+      <p class="sub" id="cMsg" style="min-height:16px"></p>`;
+  } else {
+    c.innerHTML = `
+      <div class="big">🧸</div>
+      <h1>Your Data Hub</h1>
+      <p class="sub">Welcome back. Everything's where you left it.</p>
+      <label style="text-align:left">Enter your hub key</label>
+      <input id="k1" type="password" placeholder="Enter your hub key" onkeydown="if(event.key==='Enter')openHub()" />
+      <button class="btn" style="width:100%;margin-top:16px" onclick="openHub()">Open my hub</button>
+      <p class="note">Your key unlocks your local hub. We never see it.</p>
+      <p class="sub" id="cMsg" style="min-height:16px"></p>`;
+  }
+}
+async function createHub(){
+  const k1=document.getElementById("k1").value, k2=document.getElementById("k2").value, msg=document.getElementById("cMsg");
+  if(k1.length<4){ msg.textContent="Pick a key with at least 4 characters."; return; }
+  if(k1!==k2){ msg.textContent="The two keys don't match — try again."; return; }
+  try{
+    await fetch("/setup",{ method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({key:k1}) })
+      .then(r=>{ if(!r.ok) return r.json().then(e=>{throw new Error(e.error)}); });
+    TOKEN=k1; localStorage.setItem("sdh-token",TOKEN); await api("/capabilities"); enterApp();
+  }catch(e){ msg.textContent = e.message || "Couldn't set that up — try again."; }
+}
+async function openHub(){
+  TOKEN=document.getElementById("k1").value; const msg=document.getElementById("cMsg");
+  try{ await api("/capabilities"); localStorage.setItem("sdh-token",TOKEN); enterApp(); }
+  catch(e){ msg.textContent="That key didn't unlock your hub. Try again."; }
+}
+function enterApp(){
+  document.getElementById("connect").style.display="none";
+  document.getElementById("app").style.display="block";
+  applyTheme(localStorage.getItem("sdh-theme")||""); renderThemeDots(); refresh();
+}
+
+function applyTheme(t){ document.documentElement.setAttribute("data-theme", t); localStorage.setItem("sdh-theme", t); }
+function renderThemeDots(){
+  const wrap=document.getElementById("themeDots"); wrap.innerHTML="";
+  const sw={"":"#ff9a7a","mint":"#5ec9a3","berry":"#ff7eb6","dusk":"#34304f","sun":"#ffb84d"};
+  THEMES.forEach(t=>{ const d=document.createElement("div"); d.className="dot"; d.style.background=sw[t];
+    d.onclick=()=>applyTheme(t); wrap.appendChild(d); });
+}
+
+async function refresh(){ try{ CONTAINERS=(await api("/containers")).containers||[]; renderGrid(); }catch(e){} }
+function verNum(v){ return "v"+parseInt(String(v).replace("v_",""),10); }
+
+function renderGrid(){
+  const grid=document.getElementById("grid");
+  document.getElementById("empty").style.display = CONTAINERS.length? "none":"block";
+  grid.innerHTML="";
+  CONTAINERS.forEach(c=>{
+    const p=pref(c.container_id), info=TYPE_INFO[c.type]||{label:c.type,icon:"📦"}, st=STATUS[c.governance_state]||{t:c.governance_state,e:""};
+    const box=document.createElement("div"); box.className="box";
+    if(p.color){ box.style.background=p.color; if(p.color==="#2e2a44") box.style.color="#f3eefe"; }
+    const icon = p.img? `<img class="ico" src="${p.img}">` : `<div class="ico">${p.icon||info.icon}</div>`;
+    box.innerHTML = `<div class="ver">${verNum(c.version_id)}</div>${icon}
+      <div class="ttl">${esc(c.title)}</div><div class="meta">${info.label}</div>
+      <div class="pill ${c.governance_state}">${st.e} ${st.t}</div>
+      <div class="stickers">${(p.stickers||[]).join("")}</div>`;
+    box.onclick=()=>openBox(c.container_id); grid.appendChild(box);
+  });
+}
+
+// ---- write helpers (lock -> act -> release) ----
+function lockHdr(lk){ return { "x-sdh-token":TOKEN, "x-sdh-lock":lk, "content-type":"application/json" }; }
+async function withLock(id, fn){
+  const { lockId } = await api(`/containers/${id}/locks`, { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({actor:ME()}) });
+  try{ return await fn(lockId); }
+  finally{ await fetch(`/containers/${id}/locks/${lockId}`, { method:"DELETE", headers:{"x-sdh-token":TOKEN} }); }
+}
+async function sendForReview(id){ await withLock(id, lk=>api(`/containers/${id}/review/request`,{method:"POST",headers:lockHdr(lk),body:JSON.stringify({actor:ME()})})); openBox(id); refresh(); }
+async function setReview(id, state){ await withLock(id, lk=>api(`/containers/${id}/review/state`,{method:"POST",headers:lockHdr(lk),body:JSON.stringify({state,actor:ME()})})); openBox(id); refresh(); }
+
+async function openBox(id){
+  OPEN_ID=id;
+  const { manifest:m } = await api("/containers/"+id);
+  const p=pref(m.container_id), info=TYPE_INFO[m.type]||{label:m.type,icon:"📦"};
+  const hist=(m.governance.history||[]).map(h=>`<div class="tl"><b>${actorEmoji(h.actor)} ${esc(pretty(h.actor))}</b> ${esc(prettyAction(h.action))}<div><span>${new Date(h.at).toLocaleString()}</span></div></div>`).join("");
+  let acts="";
+  const s=m.governance.state;
+  if(s==="draft"||s==="changes_requested"||s==="rejected") acts=`<button class="btn sm" onclick="sendForReview('${m.container_id}')">Send for review</button>`;
+  else if(s==="in_review") acts=`<button class="btn sm ok" onclick="setReview('${m.container_id}','approved')">Approve</button><button class="btn sm warn" onclick="setReview('${m.container_id}','changes_requested')">Request changes</button>`;
+  else if(s==="approved") acts=`<button class="btn sm ghost" onclick="setReview('${m.container_id}','in_review')">Reopen review</button>`;
+  document.getElementById("sheet").innerHTML = `
+    <button class="x" onclick="closeSheet()">✕</button>
+    <div class="row">${p.img?`<img class="ico" src="${p.img}">`:`<div class="ico">${p.icon||info.icon}</div>`}
+      <div><div style="font-weight:800;font-size:20px">${esc(m.title)}</div>
+      <div class="meta" style="color:var(--soft)">${info.label} · ${verNum(m.version_id)} · ${esc(m.owner.workspace_id)}</div></div></div>
+    <div class="pill ${s}" style="margin-top:6px">${(STATUS[s]||{e:""}).e} ${(STATUS[s]||{t:s}).t}</div>
+    <div class="actions">${acts}</div>
+    <label>Story so far</label>
+    <div class="timeline">${hist||"<span style='color:var(--soft)'>nothing yet</span>"}</div>
+    <label>Make it yours — pick an icon</label>
+    <div class="emojis">${ICONS.map(e=>`<span class="em" onclick="setIcon('${m.container_id}','${e}')">${e}</span>`).join("")}</div>
+    <label>…or use your own image</label>
+    <input type="file" accept="image/*" onchange="setImg('${m.container_id}', this)" />
+    <label>Stickers</label>
+    <div class="emojis">${STICKERS.map(e=>`<span class="em" onclick="addSticker('${m.container_id}','${e}')">${e}</span>`).join("")}<span class="em" title="clear" onclick="clearStickers('${m.container_id}')">🧹</span></div>
+    <label>Box color</label>
+    <div class="swatches">${COLORS.map(c=>`<div class="sw" style="background:${c}" onclick="setColor('${m.container_id}','${c}')"></div>`).join("")}</div>`;
+  document.getElementById("scrim").classList.add("on");
+}
+function closeSheet(){ document.getElementById("scrim").classList.remove("on"); }
+
+function setIcon(id,e){ pref(id).icon=e; pref(id).img=null; savePrefs(); renderGrid(); }
+function setImg(id,input){ const f=input.files[0]; if(!f)return; const r=new FileReader(); r.onload=()=>{ pref(id).img=r.result; pref(id).icon=null; savePrefs(); renderGrid(); }; r.readAsDataURL(f); }
+function addSticker(id,e){ const p=pref(id); if((p.stickers=p.stickers||[]).length<4) p.stickers.push(e); savePrefs(); renderGrid(); }
+function clearStickers(id){ pref(id).stickers=[]; savePrefs(); renderGrid(); }
+function setColor(id,c){ pref(id).color=c; savePrefs(); renderGrid(); }
+
+function openCreate(){
+  document.getElementById("sheet").innerHTML = `
+    <button class="x" onclick="closeSheet()">✕</button>
+    <div style="font-weight:800;font-size:22px">New box ✨</div>
+    <label>What's it called?</label><input id="newTitle" placeholder="e.g. Acme launch video" />
+    <label>What kind?</label><select id="newType">${Object.entries(TYPE_INFO).map(([k,v])=>`<option value="${k}">${v.icon} ${v.label}</option>`).join("")}</select>
+    <label>Workspace</label><input id="newWs" value="${esc(localStorage.getItem('sdh-ws')||'my-workspace')}" />
+    <button class="btn" style="width:100%;margin-top:18px" onclick="createBox()">Make it</button>`;
+  document.getElementById("scrim").classList.add("on");
+}
+async function createBox(){
+  const title=document.getElementById("newTitle").value.trim()||"Untitled";
+  const type=document.getElementById("newType").value;
+  const ws=document.getElementById("newWs").value.trim()||"my-workspace"; localStorage.setItem("sdh-ws",ws);
+  await api("/containers",{ method:"POST", headers:{"content-type":"application/json"},
+    body:JSON.stringify({ type, title, actor:ME(), owner:{org_id:"org_local",workspace_id:ws}, product:TYPE_INFO[type].product }) });
+  closeSheet(); refresh();
+}
+
+function esc(s){ return String(s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
+function pretty(a){ return a.replace(/^.*?:/,""); }
+function actorEmoji(a){ return a.startsWith("expert")?"👩‍⚖️":a.startsWith("ai")?"🤖":a.startsWith("bts")?"🧪":"🙂"; }
+function prettyAction(a){ return ({created:"made it",committed:"saved a version",review_requested:"sent it for review",
+  set_approved:"approved it ✅",set_rejected:"sent it back",set_changes_requested:"asked for changes",set_in_review:"reopened review"})[a]||a.replace(/_/g," "); }
+
+startConnect();
+</script>
+</body>
+</html>
