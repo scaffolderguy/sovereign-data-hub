@@ -9,7 +9,7 @@ import { ContainerStore } from "./store";
 import { LockService } from "./services/lockService";
 import { CommitService } from "./services/commitService";
 import { GovernanceService } from "./services/governanceService";
-import { SCHEMA_VERSION, GovernanceState } from "../schemas/container";
+import { SCHEMA_VERSION, GovernanceState, validateManifest } from "../schemas/container";
 
 /**
  * Sovereign Data Hub — local HTTP server (spec §3).
@@ -124,7 +124,18 @@ const server = http.createServer(async (req, res) => {
         connectors: ["local-folder"],
         governance_enabled: true,
         read_only: READ_ONLY,
+        data_location: ROOT,
       });
+    }
+
+    // POST /import — bring a container in from an exported bundle
+    if (seg[0] === "import" && seg.length === 1 && method === "POST") {
+      const b = await readJson(req);
+      const m = validateManifest(b.manifest);
+      await store.writeManifest(m.container_id, m);
+      if (b.payload?.b64) await store.writePayload(m.container_id, b.payload.path, Buffer.from(b.payload.b64, "base64"));
+      for (const a of (b.assets || [])) await store.writeAsset(m.container_id, a.pointer, Buffer.from(a.b64, "base64"));
+      return sendJson(res, 201, { container: m });
     }
 
     if (seg[0] === "containers") {
@@ -148,6 +159,20 @@ const server = http.createServer(async (req, res) => {
       // GET /containers/:id
       if (seg.length === 2 && method === "GET") {
         return sendJson(res, 200, { manifest: await store.open(id) });
+      }
+
+      // GET /containers/:id/export — a portable bundle (manifest + payload + assets)
+      if (seg[2] === "export" && seg.length === 3 && method === "GET") {
+        const m = await store.open(id);
+        let payload: { path: string; b64: string } | null = null;
+        try { payload = { path: m.payload.entry, b64: (await store.readPayload(id, m.payload.entry)).toString("base64") }; } catch {}
+        const assets: { pointer: string; b64: string }[] = [];
+        for (const a of m.assets) {
+          if (!/^[a-z0-9]+:\/\//i.test(a.pointer)) {
+            try { assets.push({ pointer: a.pointer, b64: (await store.readAsset(id, a.pointer)).toString("base64") }); } catch {}
+          }
+        }
+        return sendJson(res, 200, { sdh_bundle: "0.1", manifest: m, payload, assets });
       }
 
       // /containers/:id/payload/<rest...>
