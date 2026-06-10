@@ -72,7 +72,7 @@ export const ContainerManifest = z
     product: z.object({ name: z.string().min(1), min_version: z.string().min(1) }),
     created_at: z.string().min(1),
     updated_at: z.string().min(1),
-    title: z.string(),
+    title: z.string().max(500),
     payload: z.object({ entry: z.string().min(1) }),
     assets: z.array(AssetRef).default([]),
     secrets: z.array(SecretRef).default([]),

@@ -1,5 +1,5 @@
 import http from "node:http";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -25,6 +25,20 @@ const ROOT = process.env.SDH_ROOT || "./sdh-data";
 const HOST = process.env.SDH_HOST || "127.0.0.1"; // loopback by default
 const PORT = Number(process.env.SDH_PORT || 8787);
 const READ_ONLY = /^(1|true|yes)$/i.test(process.env.SDH_READ_ONLY || "");
+// Cap request bodies — without one, any token holder can exhaust memory with a
+// single unbounded upload. Override with SDH_MAX_BODY_BYTES if you need more.
+const MAX_BODY_BYTES = Number(process.env.SDH_MAX_BODY_BYTES || 64 * 1024 * 1024);
+
+// The hub is loopback-only software. Binding to a network address exposes a
+// single-shared-token, no-rate-limit API to the whole LAN, so it has to be an
+// explicit, eyes-open choice — never one env var typo away.
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+if (!LOOPBACK_HOSTS.has(HOST) && !/^(1|true|yes)$/i.test(process.env.SDH_ALLOW_NETWORK || "")) {
+  console.error(
+    `SDH: refusing to bind to non-loopback host "${HOST}". The hub key is a single shared token with no rate limiting — exposing it to a network needs an explicit opt-in. Set SDH_ALLOW_NETWORK=1 if you really mean it.`,
+  );
+  process.exit(1);
+}
 // The hub key is CHOSEN BY THE USER at setup and stored locally as a hash only —
 // we never see or store the raw key. SDH_TOKEN env is a dev/smoke-test override.
 const KEY_FILE = path.join(ROOT, ".sdh-key");
@@ -54,7 +68,20 @@ function sendBytes(res: http.ServerResponse, status: number, bytes: Buffer) {
 function readRaw(req: http.IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (c) => chunks.push(c as Buffer));
+    let total = 0;
+    req.on("data", (c) => {
+      total += (c as Buffer).length;
+      if (total > MAX_BODY_BYTES) {
+        // Stop buffering, answer 413, and drain the rest — destroying the
+        // socket here would kill the response along with the request.
+        req.removeAllListeners("data");
+        req.removeAllListeners("end");
+        reject(new ApiError(413, `request body exceeds the ${MAX_BODY_BYTES}-byte limit (SDH_MAX_BODY_BYTES)`));
+        req.resume();
+        return;
+      }
+      chunks.push(c as Buffer);
+    });
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
@@ -100,7 +127,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --- auth: the user's chosen key, compared by hash, on every data request ---
-    if (!keyHash || sha256(String(req.headers["x-sdh-token"] || "")) !== keyHash) {
+    // timingSafeEqual instead of !== : a plain string compare leaks how many
+    // leading characters matched. Both sides are 64-char hex, so lengths agree.
+    const providedHash = sha256(String(req.headers["x-sdh-token"] || ""));
+    if (!keyHash || !timingSafeEqual(Buffer.from(providedHash), Buffer.from(keyHash))) {
       return sendJson(res, 401, { error: "missing or invalid hub key" });
     }
     // --- read-only mode: only GET allowed ---
@@ -183,6 +213,14 @@ const server = http.createServer(async (req, res) => {
           if (!b.type || !b.title || !b.owner || !b.product || !b.actor) {
             return sendJson(res, 400, { error: "type, title, owner, product, actor required" });
           }
+          // Fail closed on unregistered types: /capabilities advertises what
+          // this hub speaks, so creating something it doesn't would make that
+          // list decorative and let typo'd types slip in silently.
+          if (!KNOWN_TYPES.includes(b.type)) {
+            return sendJson(res, 400, {
+              error: `unknown container type "${b.type}" — this hub speaks: ${KNOWN_TYPES.join(", ")}`,
+            });
+          }
           const m = await store.create(b);
           return sendJson(res, 201, { container: m });
         }
@@ -256,12 +294,25 @@ const server = http.createServer(async (req, res) => {
           }
           if (method === "PUT") {
             if (!requireLock(id)) return;
+            // The asset id becomes a literal filename. Bound the charset, and
+            // reject Windows reserved device names (nul, con, com1…) and
+            // trailing dots — on Windows those silently become something else.
+            if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(assetId) || assetId.endsWith(".")) {
+              return sendJson(res, 400, {
+                error: `invalid asset id "${assetId}" — use 1-128 letters, digits, dot, dash, underscore (no trailing dot)`,
+              });
+            }
+            if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(assetId)) {
+              return sendJson(res, 400, {
+                error: `invalid asset id "${assetId}" — reserved device name on Windows`,
+              });
+            }
             const bytes = await readRaw(req);
             const pointer = `assets/${assetId}`;
             await store.writeAsset(id, pointer, bytes);
             // upsert the manifest asset entry (pointer + integrity)
-            const sha256 = createHash("sha256").update(bytes).digest("hex");
-            const entry = { id: assetId, pointer, sha256, bytes: bytes.length };
+            const digest = createHash("sha256").update(bytes).digest("hex");
+            const entry = { id: assetId, pointer, sha256: digest, bytes: bytes.length };
             const assets = manifest.assets.filter((x) => x.id !== assetId).concat(entry);
             await store.writeManifest(id, { ...manifest, assets, updated_at: new Date().toISOString() });
             return sendJson(res, 200, { asset: entry });
@@ -281,12 +332,14 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      // POST /containers/:id/commit
+      // POST /containers/:id/commit — pass expected_version (the version_id your
+      // work was based on) to get optimistic concurrency: a stale commit is
+      // refused instead of silently overwriting someone else's.
       if (seg[2] === "commit" && seg.length === 3 && method === "POST") {
         if (!requireLock(id)) return;
         const b = await readJson(req);
         if (!b.actor || !b.summary) return sendJson(res, 400, { error: "actor and summary required" });
-        return sendJson(res, 200, await commits.commit(id, b.actor, b.summary));
+        return sendJson(res, 200, await commits.commit(id, b.actor, b.summary, b.expected_version));
       }
 
       // review (governance)

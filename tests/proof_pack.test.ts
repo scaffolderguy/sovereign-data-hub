@@ -56,6 +56,7 @@ async function startHub(opts: { port: number; readOnly?: boolean }): Promise<Chi
     SDH_HOST: "127.0.0.1",
     SDH_PORT: String(opts.port),
     SDH_TOKEN: TOKEN, // dev override → keyHash = sha256("dev"); never writes .sdh-key
+    SDH_MAX_BODY_BYTES: String(1024 * 1024), // 1 MiB — small so the cap is testable
   };
   delete env.SDH_OPEN; // never pop a browser during tests
   if (opts.readOnly) env.SDH_READ_ONLY = "1";
@@ -423,5 +424,74 @@ describe("SDH proof pack — fail-closed guarantees", () => {
     const roundTrip = await api(writableUrl, "/containers/sdh_freshclean1/assets/logo");
     expect(roundTrip.status).toBe(200);
     expect(Buffer.from(await roundTrip.arrayBuffer()).equals(Buffer.from("logo-pixel-bytes"))).toBe(true);
+  });
+
+  it("a stale commit is refused instead of silently overwriting a newer version", async () => {
+    const id = await createContainer("concurrency");
+    const lockId = await lock(id);
+    const headers = { "x-sdh-lock": lockId, "content-type": "application/json" };
+    const commit = (body: Record<string, string>) =>
+      api(writableUrl, `/containers/${id}/commit`, { method: "POST", headers, body: JSON.stringify(body) });
+
+    // First writer commits on top of v_000001 → advances to v_000002.
+    const first = await commit({ actor: "user:rob", summary: "first edit", expected_version: "v_000001" });
+    expect(first.status).toBe(200);
+    expect((await first.json()).version_id).toBe("v_000002");
+
+    // A writer whose work was ALSO based on v_000001 (crashed hub, expired
+    // lease, re-acquired lock) must be refused — not silently win.
+    const stale = await commit({ actor: "user:mallory", summary: "stale edit", expected_version: "v_000001" });
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error).toMatch(/stale commit/);
+
+    // Based on the current version, the commit goes through.
+    const fresh = await commit({ actor: "user:rob", summary: "second edit", expected_version: "v_000002" });
+    expect(fresh.status).toBe(200);
+    expect((await fresh.json()).version_id).toBe("v_000003");
+  });
+
+  it("an unregistered container type is refused at create", async () => {
+    const res = await api(writableUrl, "/containers", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "totally.madeup",
+        title: "should fail",
+        owner: { org_id: "org_acme", workspace_id: "ws_marketing" },
+        product: { name: "Demo Master", min_version: "1.0.0" },
+        actor: "user:rob",
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/unknown container type/);
+  });
+
+  it("asset ids that would be unsafe filenames are refused", async () => {
+    const id = await createContainer("asset id guard");
+    const lockId = await lock(id);
+    const put = (assetId: string) =>
+      api(writableUrl, `/containers/${id}/assets/${encodeURIComponent(assetId)}`, {
+        method: "PUT",
+        headers: { "x-sdh-lock": lockId, "content-type": "application/octet-stream" },
+        body: Buffer.from("x"),
+      });
+
+    expect((await put("nul")).status).toBe(400); // Windows reserved device name
+    expect((await put("con.png")).status).toBe(400); // reserved even with an extension
+    expect((await put("../escape")).status).toBe(400); // traversal-shaped
+    expect((await put("ends.")).status).toBe(400); // trailing dot is silently dropped on Windows
+    expect((await put("hero_image-2.png")).status).toBe(200); // normal names still fine
+  });
+
+  it("an oversized request body is refused with 413, not buffered into memory", async () => {
+    const id = await createContainer("body cap");
+    const lockId = await lock(id);
+    const res = await api(writableUrl, `/containers/${id}/assets/big`, {
+      method: "PUT",
+      headers: { "x-sdh-lock": lockId, "content-type": "application/octet-stream" },
+      body: Buffer.alloc(2 * 1024 * 1024, 7), // 2 MiB against the 1 MiB test cap
+    });
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toMatch(/body exceeds/);
   });
 });
