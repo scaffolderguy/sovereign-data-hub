@@ -32,7 +32,7 @@ sovereign-data-hub/
   examples/
     demo_master.project/    # a valid v0.1 container                            [DONE]
   tests/
-    proof_pack.test.ts      # the six truths                                    [next]
+    proof_pack.test.ts      # the six truths                                    [DONE]
 ```
 
 ## Design choices (v0.1)
@@ -67,8 +67,8 @@ Verify types: `npm run typecheck`.
 2. ✅ Container schema + validator
 3. ✅ Local-folder connector
 4. ✅ Hub server (capabilities, locks, commit, governance, read-only)
-5. ⬜ Demo Master adapter (wrap project pack → speak Hub Protocol)
-6. ⬜ BTS proof-pack test (the six truths)
+5. ✅ Demo Master adapter — `lib/sovereign/` in Demo Master; verified round-trip
+6. ✅ BTS proof-pack test (the six truths) — `npm test`
 
 ## Runtime
 TypeScript/Node, run via `tsx`. Prototyped against **Demo Master** first
