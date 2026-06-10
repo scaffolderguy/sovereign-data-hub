@@ -49,6 +49,10 @@ export class ContainerStore {
     return validateManifest(await this.connector.readManifest(id));
   }
 
+  exists(id: string): Promise<boolean> {
+    return this.connector.exists(id);
+  }
+
   async create(params: {
     type: string;
     title: string;

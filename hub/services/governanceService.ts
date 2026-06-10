@@ -1,4 +1,5 @@
 import { ContainerStore } from "../store";
+import { ApiError } from "../errors";
 import { ContainerManifest, GovernanceState } from "../../schemas/container";
 
 /**
@@ -63,6 +64,20 @@ export class GovernanceService {
   ): Promise<ContainerManifest> {
     const m = await this.store.open(id);
     this.assertTransition(m.governance.state, to);
+    // Approval is a gate, not a note: if any methodology check on record (the
+    // incoming set, or the retained prior set when none are sent) has failed,
+    // the transition is refused. Approving over a failed check would make the
+    // whole governance record decorative.
+    const effectiveChecks = checks.length ? checks : m.governance.methodology_checks;
+    if (to === "approved") {
+      const failed = effectiveChecks.filter((c) => !c.passed).map((c) => c.id);
+      if (failed.length) {
+        throw new ApiError(
+          409,
+          `cannot approve: methodology check(s) failed: ${failed.join(", ")}. Fix the work or record a rejection — approval over failed checks is not allowed.`,
+        );
+      }
+    }
     const now = new Date().toISOString();
     const updated: ContainerManifest = {
       ...m,
@@ -70,7 +85,7 @@ export class GovernanceService {
       governance: {
         ...m.governance,
         state: to,
-        methodology_checks: checks.length ? checks : m.governance.methodology_checks,
+        methodology_checks: effectiveChecks,
         reviewers:
           actor && !m.governance.reviewers.includes(actor)
             ? [...m.governance.reviewers, actor]
@@ -84,7 +99,7 @@ export class GovernanceService {
 
   private assertTransition(from: GovernanceState, to: GovernanceState): void {
     if (from !== to && !(TRANSITIONS[from] ?? []).includes(to)) {
-      throw new Error(`SDH governance: illegal transition ${from} -> ${to}`);
+      throw new ApiError(409, `SDH governance: illegal transition ${from} -> ${to}`);
     }
   }
 }

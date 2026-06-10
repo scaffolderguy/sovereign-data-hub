@@ -39,6 +39,10 @@ export class LocalFolderConnector {
     return ids;
   }
 
+  async exists(id: string): Promise<boolean> {
+    return existsSync(path.join(this.dir(id), "container.json"));
+  }
+
   async readManifest(id: string): Promise<unknown> {
     return JSON.parse(await readFile(path.join(this.dir(id), "container.json"), "utf8"));
   }

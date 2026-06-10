@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { LocalFolderConnector } from "./connectors/localFolder";
+import { ApiError } from "./errors";
 import { ContainerStore } from "./store";
 import { LockService } from "./services/lockService";
 import { CommitService } from "./services/commitService";
@@ -128,13 +129,46 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // POST /import — bring a container in from an exported bundle
+    // POST /import — bring a container in from an exported bundle.
+    // Fail closed: never overwrite an existing container (that would silently
+    // destroy its history), and never persist bytes that don't match the
+    // integrity hash the manifest claims for them.
     if (seg[0] === "import" && seg.length === 1 && method === "POST") {
       const b = await readJson(req);
       const m = validateManifest(b.manifest);
+      if (await store.exists(m.container_id)) {
+        return sendJson(res, 409, {
+          error: `container ${m.container_id} already exists; import refuses to overwrite its history`,
+        });
+      }
+      // Decode and verify everything BEFORE the first write, so a bad bundle
+      // leaves no half-imported container behind.
+      const assets: { pointer: string; bytes: Buffer }[] = [];
+      for (const a of b.assets || []) {
+        if (typeof a?.pointer !== "string" || typeof a?.b64 !== "string") {
+          return sendJson(res, 400, { error: "bundle asset entries need string pointer and b64" });
+        }
+        const entry = m.assets.find((x) => x.pointer === a.pointer);
+        if (!entry) {
+          return sendJson(res, 400, { error: `bundle asset "${a.pointer}" is not listed in the manifest` });
+        }
+        const bytes = Buffer.from(a.b64, "base64");
+        if (entry.sha256) {
+          const actual = createHash("sha256").update(bytes).digest("hex");
+          if (actual !== entry.sha256) {
+            return sendJson(res, 422, {
+              error: `integrity check failed for asset "${a.pointer}": manifest says ${entry.sha256}, bundle bytes hash to ${actual}`,
+            });
+          }
+        }
+        assets.push({ pointer: a.pointer, bytes });
+      }
+      if (b.payload && (typeof b.payload.path !== "string" || typeof b.payload.b64 !== "string")) {
+        return sendJson(res, 400, { error: "bundle payload needs string path and b64" });
+      }
       await store.writeManifest(m.container_id, m);
       if (b.payload?.b64) await store.writePayload(m.container_id, b.payload.path, Buffer.from(b.payload.b64, "base64"));
-      for (const a of (b.assets || [])) await store.writeAsset(m.container_id, a.pointer, Buffer.from(a.b64, "base64"));
+      for (const a of assets) await store.writeAsset(m.container_id, a.pointer, a.bytes);
       return sendJson(res, 201, { container: m });
     }
 
@@ -168,9 +202,19 @@ const server = http.createServer(async (req, res) => {
         try { payload = { path: m.payload.entry, b64: (await store.readPayload(id, m.payload.entry)).toString("base64") }; } catch {}
         const assets: { pointer: string; b64: string }[] = [];
         for (const a of m.assets) {
-          if (!/^[a-z0-9]+:\/\//i.test(a.pointer)) {
-            try { assets.push({ pointer: a.pointer, b64: (await store.readAsset(id, a.pointer)).toString("base64") }); } catch {}
+          if (/^[a-z0-9]+:\/\//i.test(a.pointer)) continue; // remote pointers travel as pointers
+          let bytes: Buffer;
+          try { bytes = await store.readAsset(id, a.pointer); } catch { continue; } // missing local file: skip
+          // Never export corruption with a seal of integrity (same rule as GET).
+          if (a.sha256) {
+            const actual = createHash("sha256").update(bytes).digest("hex");
+            if (actual !== a.sha256) {
+              return sendJson(res, 409, {
+                error: `integrity check failed for asset "${a.id}" during export: manifest says ${a.sha256}, bytes on disk hash to ${actual}. Refusing to build a corrupt bundle.`,
+              });
+            }
           }
+          assets.push({ pointer: a.pointer, b64: bytes.toString("base64") });
         }
         return sendJson(res, 200, { sdh_bundle: "0.1", manifest: m, payload, assets });
       }
@@ -197,7 +241,18 @@ const server = http.createServer(async (req, res) => {
           if (method === "GET") {
             const a = manifest.assets.find((x) => x.id === assetId);
             if (!a) return sendJson(res, 404, { error: "asset not found" });
-            return sendBytes(res, 200, await store.readAsset(id, a.pointer));
+            const bytes = await store.readAsset(id, a.pointer);
+            // The manifest's hash is a promise — keep it. Serving bytes that no
+            // longer match would hand out corruption with a seal of integrity.
+            if (a.sha256) {
+              const actual = createHash("sha256").update(bytes).digest("hex");
+              if (actual !== a.sha256) {
+                return sendJson(res, 409, {
+                  error: `integrity check failed for asset "${assetId}": manifest says ${a.sha256}, bytes on disk hash to ${actual}. The file was changed outside the hub or is corrupted.`,
+                });
+              }
+            }
+            return sendBytes(res, 200, bytes);
           }
           if (method === "PUT") {
             if (!requireLock(id)) return;
@@ -256,6 +311,9 @@ const server = http.createServer(async (req, res) => {
 
     return sendJson(res, 404, { error: "no such route" });
   } catch (err) {
+    if (err instanceof ApiError) {
+      return sendJson(res, err.status, { error: err.message });
+    }
     console.error("SDH error:", err);
     return sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
   }

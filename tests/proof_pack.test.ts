@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { validateManifest, SCHEMA_VERSION } from "../schemas/container";
@@ -256,5 +256,172 @@ describe("SDH proof pack — the six truths", () => {
     const bundle = await exp.json();
     expect(bundle.sdh_bundle).toBe("0.1");
     expect(bundle.manifest.container_id).toBe(containerId);
+  });
+});
+
+/**
+ * Fail-closed guarantees — the controls the hub ADVERTISES must be ENFORCED.
+ * A recorded hash that is never checked, or an approval that ignores failed
+ * checks, is worse than nothing: it looks like protection. These tests prove
+ * the hub refuses (loudly, with a reason) rather than serving corruption,
+ * rubber-stamping, or overwriting history.
+ */
+describe("SDH proof pack — fail-closed guarantees", () => {
+  /** Create a fresh container over the protocol and return its id. */
+  async function createContainer(title: string): Promise<string> {
+    const res = await api(writableUrl, "/containers", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "demo_master.project",
+        title,
+        owner: { org_id: "org_acme", workspace_id: "ws_marketing" },
+        product: { name: "Demo Master", min_version: "1.0.0" },
+        actor: "user:rob",
+      }),
+    });
+    expect(res.status).toBe(201);
+    return (await res.json()).container.container_id;
+  }
+
+  /** Acquire a write lease and return the lock id. */
+  async function lock(id: string): Promise<string> {
+    const res = await api(writableUrl, `/containers/${id}/locks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ actor: "user:rob" }),
+    });
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    return body.lockId;
+  }
+
+  it("a tampered asset is refused with an integrity error, not served", async () => {
+    const id = await createContainer("tamper target");
+    const lockId = await lock(id);
+    const put = await api(writableUrl, `/containers/${id}/assets/evidence`, {
+      method: "PUT",
+      headers: { "x-sdh-lock": lockId, "content-type": "application/octet-stream" },
+      body: Buffer.from("the-original-evidence-bytes"),
+    });
+    expect(put.status).toBe(200);
+
+    // Corrupt the bytes BEHIND the hub's back (disk failure / outside edit).
+    writeFileSync(path.join(dataRoot, id, "assets", "evidence"), "tampered-evidence-bytes");
+
+    // The hub must refuse to serve it — with a reason — not hand out corruption
+    // under the manifest's seal of integrity.
+    const get = await api(writableUrl, `/containers/${id}/assets/evidence`);
+    expect(get.status).toBe(409);
+    const err = await get.json();
+    expect(err.error).toMatch(/integrity check failed/);
+    expect(err.error).toMatch(/changed outside the hub|corrupt/);
+
+    // Export of the same container must also refuse to build a corrupt bundle.
+    const exp = await api(writableUrl, `/containers/${id}/export`);
+    expect(exp.status).toBe(409);
+    expect((await exp.json()).error).toMatch(/integrity check failed/);
+  });
+
+  it("approval is refused while any methodology check has failed", async () => {
+    const id = await createContainer("governance gate");
+    const lockId = await lock(id);
+    const headers = { "x-sdh-lock": lockId, "content-type": "application/json" };
+
+    const reqReview = await api(writableUrl, `/containers/${id}/review/request`, {
+      method: "POST", headers, body: JSON.stringify({ actor: "user:rob" }),
+    });
+    expect(reqReview.status).toBe(200);
+
+    // Approving WITH a failed check → refused, state unchanged.
+    const overFailed = await api(writableUrl, `/containers/${id}/review/state`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        state: "approved", actor: "expert:jane",
+        checks: [{ id: "sources_cited", passed: false, note: "two claims uncited" }],
+      }),
+    });
+    expect(overFailed.status).toBe(409);
+    expect((await overFailed.json()).error).toMatch(/cannot approve/);
+    const after = await api(writableUrl, `/containers/${id}/review`);
+    expect((await after.json()).governance.state).toBe("in_review");
+
+    // Record the failure honestly via changes_requested, cycle back to review...
+    const changes = await api(writableUrl, `/containers/${id}/review/state`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        state: "changes_requested", actor: "expert:jane",
+        checks: [{ id: "sources_cited", passed: false, note: "two claims uncited" }],
+      }),
+    });
+    expect(changes.status).toBe(200);
+    const back = await api(writableUrl, `/containers/${id}/review/state`, {
+      method: "POST", headers, body: JSON.stringify({ state: "in_review", actor: "user:rob" }),
+    });
+    expect(back.status).toBe(200);
+
+    // ...then approving WITHOUT sending checks must still see the retained
+    // failure — the silent-rubber-stamp path is closed.
+    const rubberStamp = await api(writableUrl, `/containers/${id}/review/state`, {
+      method: "POST", headers, body: JSON.stringify({ state: "approved", actor: "expert:jane" }),
+    });
+    expect(rubberStamp.status).toBe(409);
+    expect((await rubberStamp.json()).error).toMatch(/sources_cited/);
+
+    // Once the checks actually pass, approval goes through.
+    const approve = await api(writableUrl, `/containers/${id}/review/state`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        state: "approved", actor: "expert:jane",
+        checks: [{ id: "sources_cited", passed: true }],
+      }),
+    });
+    expect(approve.status).toBe(200);
+    expect((await approve.json()).manifest.governance.state).toBe("approved");
+  });
+
+  it("import refuses to overwrite an existing container, and refuses bytes that don't match the manifest hash", async () => {
+    // Build a real container with a real asset, then export its bundle.
+    const id = await createContainer("import source");
+    const lockId = await lock(id);
+    await api(writableUrl, `/containers/${id}/assets/logo`, {
+      method: "PUT",
+      headers: { "x-sdh-lock": lockId, "content-type": "application/octet-stream" },
+      body: Buffer.from("logo-pixel-bytes"),
+    });
+    const bundle = await (await api(writableUrl, `/containers/${id}/export`)).json();
+    expect(bundle.assets.length).toBe(1);
+
+    const importBundle = (b: unknown) =>
+      api(writableUrl, "/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(b),
+      });
+
+    // Re-importing the same container id would silently clobber its history → 409.
+    const clobber = await importBundle(bundle);
+    expect(clobber.status).toBe(409);
+    expect((await clobber.json()).error).toMatch(/already exists/);
+
+    // A fresh id but TAMPERED bytes → the manifest hash catches it → 422.
+    const tampered = {
+      ...bundle,
+      manifest: { ...bundle.manifest, container_id: "sdh_freshtamper1" },
+      assets: [{ pointer: bundle.assets[0].pointer, b64: Buffer.from("not-the-logo").toString("base64") }],
+    };
+    const badImport = await importBundle(tampered);
+    expect(badImport.status).toBe(422);
+    expect((await badImport.json()).error).toMatch(/integrity check failed/);
+    // And nothing half-imported landed on disk.
+    expect(existsSync(path.join(dataRoot, "sdh_freshtamper1"))).toBe(false);
+
+    // The honest bundle with a fresh id imports cleanly and round-trips.
+    const fresh = { ...bundle, manifest: { ...bundle.manifest, container_id: "sdh_freshclean1" } };
+    const goodImport = await importBundle(fresh);
+    expect(goodImport.status).toBe(201);
+    const roundTrip = await api(writableUrl, "/containers/sdh_freshclean1/assets/logo");
+    expect(roundTrip.status).toBe(200);
+    expect(Buffer.from(await roundTrip.arrayBuffer()).equals(Buffer.from("logo-pixel-bytes"))).toBe(true);
   });
 });
